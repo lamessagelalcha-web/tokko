@@ -1,0 +1,868 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Online Examination</title>
+  <style>
+* { box-sizing: border-box; }
+body { font-family: Arial, sans-serif; background: #f4f6f9; margin: 0; padding: 16px; color: #1f2937; }
+#app { max-width: 960px; margin: auto; }
+h1, h2, h3 { margin: 0 0 10px; }
+.muted { color: #6b7280; }
+.small { font-size: 13px; }
+.hidden { display: none !important; }
+
+.card { background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); margin-bottom: 14px; }
+.card.narrow { max-width: 420px; margin: 40px auto; }
+.panel { background: #fff; padding: 20px; border-radius: 0 8px 8px 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+
+.topbar { display: flex; gap: 12px; align-items: center; justify-content: space-between; background: #fff; padding: 12px 16px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); margin-bottom: 12px; flex-wrap: wrap; }
+.tabs { display: flex; gap: 4px; flex-wrap: wrap; }
+.tab { background: #e5e7eb; color: #374151; border-radius: 6px 6px 0 0; margin: 0; }
+.tab:hover { background: #d1d5db; }
+.tab.active { background: #fff; color: #2563eb; font-weight: bold; }
+
+input[type="text"], input[type="password"], input[type="number"], select, textarea {
+  width: 100%; padding: 9px; font-size: 15px; border: 1px solid #d1d5db; border-radius: 5px; margin: 4px 0 10px; font-family: inherit;
+}
+textarea { min-height: 90px; }
+label.field { display: block; font-size: 14px; font-weight: bold; }
+label.opt { display: flex; gap: 8px; align-items: flex-start; margin: 6px 0; cursor: pointer; font-weight: normal; }
+label.opt input { margin-top: 4px; }
+
+button { background: #2563eb; color: #fff; border: none; padding: 9px 16px; border-radius: 5px; cursor: pointer; font-size: 15px; margin: 4px 6px 4px 0; }
+button:hover { background: #1d4ed8; }
+button:disabled { background: #9ca3af; cursor: not-allowed; }
+button.secondary { background: #6b7280; }
+button.secondary:hover { background: #4b5563; }
+button.danger { background: #dc2626; }
+button.danger:hover { background: #b91c1c; }
+
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; align-items: end; }
+.grid input, .grid select { margin-bottom: 0; }
+.row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+.row input, .row select { width: auto; margin: 0; }
+
+.table-wrap { overflow-x: auto; margin: 12px 0; }
+table { width: 100%; border-collapse: collapse; font-size: 14px; }
+th, td { border-bottom: 1px solid #e5e7eb; padding: 8px; text-align: left; vertical-align: middle; }
+th { background: #f9fafb; white-space: nowrap; }
+td select { margin: 0; }
+
+.badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 12px; background: #e5e7eb; }
+.badge.admin { background: #fde68a; }
+.badge.teacher { background: #bfdbfe; }
+.badge.student { background: #bbf7d0; }
+
+.notice { background: #eff6ff; border: 1px solid #bfdbfe; padding: 10px 14px; border-radius: 6px; margin-bottom: 12px; }
+.notice.warn { background: #fffbeb; border-color: #fde68a; }
+
+.q-card { border: 1px solid #e5e7eb; border-radius: 6px; padding: 12px; margin-bottom: 12px; }
+.q-card .opt-row { display: flex; gap: 8px; align-items: center; }
+.q-card .opt-row input[type="text"] { margin: 3px 0; }
+.q-card .opt-row input[type="radio"] { flex: none; }
+
+.exam-top { display: flex; justify-content: space-between; font-weight: bold; border-bottom: 1px solid #ddd; padding-bottom: 10px; margin-bottom: 18px; gap: 10px; flex-wrap: wrap; }
+.exam-top .low { color: #dc2626; }
+.question-block { margin-bottom: 22px; }
+
+pre { background: #f3f4f6; padding: 10px; border-radius: 5px; overflow-x: auto; font-size: 13px; }
+
+.toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); background: #111827; color: #fff; padding: 10px 18px; border-radius: 6px; opacity: 0; pointer-events: none; transition: opacity .2s; max-width: 90%; z-index: 10; }
+.toast.show { opacity: 1; }
+.toast.bad { background: #b91c1c; }
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+  <div id="toast" class="toast"></div>
+
+  <!-- PDF reader (runs in the browser, used only for exam import) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+
+  <script>
+// ======================================================================
+// CONFIG: paste your deployed Google Apps Script web app URL here.
+// All accounts, exams and results are stored in that Google Sheet, so they
+// persist for everyone no matter which device or browser is used.
+// ======================================================================
+const APP_CONFIG = {
+  endpoint: ""   // e.g. "https://script.google.com/macros/s/XXXXXXXX/exec"
+};
+
+// ======================================================================
+// parser: turns plain exam text (extracted from a PDF or pasted) into questions.
+//   Optional title line
+//   1. Question text
+//   A. option      (also  A) option  or  (A) option)
+//   Answer: B      (or all answers at the end:  Answer Key: 1-B, 2-A, ...)
+// ======================================================================
+function parseExamText(text) {
+  const warnings = [];
+  const lines = String(text)
+    .replace(/\r/g, "")
+    .split("\n")
+    .map((l) => l.replace(/\s+/g, " ").trim())
+    .filter((l) => l && !/^(page\s*)?\d{1,3}(\s*(of|\/)\s*\d{1,3})?$/i.test(l));
+
+  const reKeyHead = /^(?:answer\s*key|answers)\b\s*:?\s*(.*)$/i;
+  const reAns = /^(?:correct\s+)?(?:answer|ans)\b\s*[:.\-]?\s*\(?([A-Ha-h])\)?(?![A-Za-z0-9])/i;
+  const reOpt = /^\(?([A-Ha-h])[.)]\s*(.+)$/;
+  const reQ = /^(?:Q(?:uestion)?\.?\s*)?(\d{1,3})\s*[.):\-]\s*(.+)$/i;
+  const rePair = /(\d{1,3})\s*[.:\-)]?\s*\(?([A-Ha-h])\)?(?![A-Za-z0-9])/g;
+
+  let title = "";
+  let cur = null;
+  let inKey = false;
+  const raw = [];
+  const key = {};
+
+  const addPairs = (s) => {
+    let m;
+    rePair.lastIndex = 0;
+    while ((m = rePair.exec(s))) key[parseInt(m[1], 10)] = m[2].toUpperCase();
+  };
+
+  for (const line of lines) {
+    let m;
+    if ((m = reKeyHead.exec(line))) { inKey = true; addPairs(m[1]); continue; }
+    if (inKey) { addPairs(line); continue; }
+    if (cur && (m = reAns.exec(line))) { cur.letter = m[1].toUpperCase(); continue; }
+    if (cur && (m = reOpt.exec(line))) { cur.options.push(m[2]); continue; }
+    if ((m = reQ.exec(line))) {
+      cur = { num: parseInt(m[1], 10), q: m[2], options: [], letter: null };
+      raw.push(cur);
+      continue;
+    }
+    if (cur) {
+      if (cur.options.length) cur.options[cur.options.length - 1] += " " + line;
+      else cur.q += " " + line;
+    } else if (!title) {
+      title = line.slice(0, 100);
+    }
+  }
+
+  const questions = [];
+  raw.forEach((c) => {
+    const label = "Question " + c.num;
+    if (c.options.length < 2) {
+      warnings.push(label + ": fewer than 2 options found, skipped.");
+      return;
+    }
+    const letter = c.letter || key[c.num] || null;
+    let answer = null;
+    if (letter) {
+      const idx = letter.charCodeAt(0) - 65;
+      if (idx < c.options.length) answer = idx;
+      else warnings.push(label + ": answer " + letter + " does not match any option.");
+    }
+    if (answer === null) warnings.push(label + ": correct answer not found, please select it.");
+    questions.push({ q: c.q.trim(), options: c.options.map((o) => o.trim()), answer });
+  });
+
+  return { title, questions, warnings };
+}
+
+// ======================================================================
+// server access (everything is stored in the Google Sheet via Apps Script)
+// ======================================================================
+const SESSION_KEY = "exam_session_v3";   // sessionStorage: login ends when the tab closes
+const $ = (id) => document.getElementById(id);
+
+let me = null;          // logged-in user
+let token = null;
+let tab = null;
+let draft = null;       // exam being imported (admin)
+let flash = null;
+let timerInterval = null;
+let toastTimer = null;
+let teachersCache = null;
+let examState = null;   // exam in progress (for tab-switch counting)
+let examSave = null;
+
+try {
+  const s = JSON.parse(sessionStorage.getItem(SESSION_KEY));
+  if (s && s.token && s.user) { token = s.token; me = s.user; }
+} catch (e) { /* ignore */ }
+
+function setSession(r) {
+  token = r.token;
+  me = r.user;
+  try { sessionStorage.setItem(SESSION_KEY, JSON.stringify(r)); } catch (e) { /* ignore */ }
+}
+
+function logout() {
+  token = null; me = null; tab = null; draft = null; teachersCache = null; examState = null;
+  try { sessionStorage.removeItem(SESSION_KEY); } catch (e) { /* ignore */ }
+  render();
+}
+
+async function api(action, data) {
+  let res;
+  try {
+    res = await fetch(APP_CONFIG.endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "text/plain;charset=utf-8" }, // avoids a CORS preflight
+      body: JSON.stringify(Object.assign({ action, token }, data || {}))
+    });
+  } catch (e) {
+    throw new Error("Could not reach the server. Check your internet connection.");
+  }
+  let j;
+  try { j = await res.json(); } catch (e) { throw new Error("The server sent an unexpected reply. Check the Apps Script deployment."); }
+  if (j.error) {
+    if (j.error === "auth") {
+      token = null; me = null;
+      try { sessionStorage.removeItem(SESSION_KEY); } catch (e) { /* ignore */ }
+      flash = null;
+      render();
+      throw new Error("Your session expired. Please sign in again.");
+    }
+    throw new Error(j.error);
+  }
+  return j;
+}
+
+// ---------- small helpers ----------
+function h(tag, props, ...kids) {
+  const el = document.createElement(tag);
+  for (const [k, v] of Object.entries(props || {})) {
+    if (k === "class") el.className = v;
+    else if (k.startsWith("on")) el.addEventListener(k.slice(2), v);
+    else if (k === "value") el.value = v;
+    else if (k === "checked") el.checked = !!v;
+    else if (v === true) el.setAttribute(k, "");
+    else if (v !== false && v != null) el.setAttribute(k, v);
+  }
+  for (const kid of kids.flat()) {
+    if (kid == null || kid === false) continue;
+    el.append(kid instanceof Node ? kid : document.createTextNode(String(kid)));
+  }
+  return el;
+}
+
+function notify(msg, bad) {
+  const t = $("toast");
+  t.textContent = msg;
+  t.className = "toast show" + (bad ? " bad" : "");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => (t.className = "toast"), 5000);
+}
+
+function field(label, input) { return h("label", { class: "field" }, label, input); }
+
+function table(headers, rows) {
+  return h("table", {},
+    h("thead", {}, h("tr", {}, headers.map((x) => h("th", {}, x)))),
+    h("tbody", {}, rows.map((r) => h("tr", {}, r.map((c) => h("td", {}, c)))))
+  );
+}
+
+function download(name, text, type) {
+  const url = URL.createObjectURL(new Blob([text], { type }));
+  const a = h("a", { href: url, download: name });
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function csvCell(v) {
+  let s = v == null ? "" : String(v);
+  if (/^[=+\-@]/.test(s)) s = "'" + s;
+  return '"' + s.replace(/"/g, '""') + '"';
+}
+
+// shows "Loading..." then fills the box with build(data); shows an error if loading fails
+function lazy(loader, build) {
+  const box = h("div", {}, h("p", { class: "muted" }, "Loading..."));
+  loader().then((d) => box.replaceChildren(build(d)))
+    .catch((e) => box.replaceChildren(h("div", { class: "notice warn" }, e.message)));
+  return box;
+}
+
+// runs an action on a button press, showing errors as a toast
+async function run(fn) {
+  try { await fn(); } catch (e) { notify(e.message, true); }
+}
+
+const FORMAT_HELP = `Final Exam Title (optional first line)
+
+1. What does HTML stand for?
+A. Hyper Text Markup Language
+B. High Tech Modern Language
+C. Home Tool Markup Language
+Answer: A
+
+2. Which GitHub feature hosts static websites for free?
+A. GitHub Actions
+B. GitHub Pages
+C. GitHub Copilot
+Answer: B
+
+(Or list all answers at the end:  Answer Key: 1-A, 2-B )`;
+
+// ---------- PDF import ----------
+async function extractPdfText(file) {
+  const buf = await file.arrayBuffer();
+  pdfjsLib.GlobalWorkerOptions.workerSrc =
+    "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+  const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+  let out = "";
+  for (let p = 1; p <= pdf.numPages; p++) {
+    const page = await pdf.getPage(p);
+    const content = await page.getTextContent();
+    let lastY = null;
+    let line = "";
+    for (const it of content.items) {
+      const y = it.transform[5];
+      if (lastY !== null && Math.abs(y - lastY) > 2) {
+        out += line + "\n";
+        line = "";
+      }
+      line += it.str;
+      lastY = y;
+    }
+    out += line + "\n";
+  }
+  return out;
+}
+
+function startDraft(text, fallbackTitle) {
+  const r = parseExamText(text);
+  draft = {
+    title: r.title || fallbackTitle || "",
+    durationMinutes: 30,
+    teacherId: "",
+    attemptsAllowed: 1,
+    questions: r.questions,
+    warnings: r.warnings
+  };
+  if (!r.questions.length) notify("No questions detected. Check the format below.", true);
+  render();
+}
+
+async function onPdfChosen(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  if (typeof pdfjsLib === "undefined") return notify("PDF reader did not load. Check your internet connection.", true);
+  notify("Reading PDF...");
+  try {
+    const text = await extractPdfText(file);
+    if (text.trim().length < 10)
+      return notify("No text found. Scanned/image PDFs are not supported; paste the text instead.", true);
+    startDraft(text, file.name.replace(/\.pdf$/i, ""));
+  } catch (err) {
+    console.error(err);
+    notify("Could not read this PDF.", true);
+  }
+}
+
+async function saveDraft() {
+  const d = draft;
+  if (!d.title.trim()) return notify("Give the exam a title.", true);
+  const dur = Number(d.durationMinutes);
+  if (!(dur >= 1 && dur <= 600)) return notify("Duration must be 1-600 minutes.", true);
+  if (!d.questions.length) return notify("The exam has no questions.", true);
+
+  const questions = [];
+  for (let i = 0; i < d.questions.length; i++) {
+    const q = d.questions[i];
+    if (!q.q.trim()) return notify("Question " + (i + 1) + " has no text.", true);
+    const options = [];
+    let answer = null;
+    q.options.forEach((o, oi) => {
+      if (o.trim()) {
+        if (q.answer === oi) answer = options.length;
+        options.push(o.trim());
+      }
+    });
+    if (options.length < 2) return notify("Question " + (i + 1) + " needs at least 2 options.", true);
+    if (answer === null) return notify("Question " + (i + 1) + ": select the correct answer.", true);
+    questions.push({ q: q.q.trim(), options, answer });
+  }
+
+  await run(async () => {
+    await api("saveExam", {
+      exam: {
+        title: d.title.trim(),
+        durationMinutes: dur,
+        teacherId: d.teacherId || "",
+        attemptsAllowed: Math.max(1, Number(d.attemptsAllowed) || 1),
+        questions
+      }
+    });
+    draft = null;
+    tab = "exams";
+    flash = "Exam saved. Students can see it now.";
+    render();
+  });
+}
+
+// ---------- views: setup & login ----------
+function viewNotConfigured() {
+  return h("div", { class: "card narrow", style: "max-width:640px" },
+    h("h1", {}, "Almost ready"),
+    h("p", {}, "This site stores its data (accounts, exams, results) in a Google Sheet so it persists for everyone. The backend address has not been set yet."),
+    h("ol", {},
+      h("li", {}, "Create a Google Sheet, open Extensions > Apps Script and paste the contents of apps-script.gs."),
+      h("li", {}, "Deploy > New deployment > Web app > Execute as: Me, Who has access: Anyone."),
+      h("li", {}, "Copy the web app URL and paste it into APP_CONFIG.endpoint near the top of the script in index.html, then upload index.html again.")));
+}
+
+function viewError(e, retry) {
+  return h("div", { class: "card narrow" },
+    h("h1", {}, "Cannot connect"),
+    h("p", {}, e.message),
+    h("button", { onclick: retry }, "Try again"));
+}
+
+function viewSetup() {
+  const f = h("form", {
+    class: "card narrow",
+    onsubmit: (e) => {
+      e.preventDefault();
+      if (f.password.value !== f.confirm.value) return notify("Passwords do not match.", true);
+      run(async () => {
+        setSession(await api("setup", { name: f.fullname.value, username: f.username.value, password: f.password.value }));
+        tab = null;
+        render();
+      });
+    }
+  },
+    h("h1", {}, "First-time setup"),
+    h("p", { class: "muted" }, "Create the Admin account. This is only available once, while no accounts exist."),
+    field("Full name", h("input", { type: "text", name: "fullname", required: true })),
+    field("Username", h("input", { type: "text", name: "username", required: true, autocomplete: "off" })),
+    field("Password (min 6 characters)", h("input", { type: "password", name: "password", required: true })),
+    field("Confirm password", h("input", { type: "password", name: "confirm", required: true })),
+    h("button", {}, "Create admin account")
+  );
+  return f;
+}
+
+function viewLogin() {
+  const f = h("form", {
+    class: "card narrow",
+    onsubmit: (e) => {
+      e.preventDefault();
+      run(async () => {
+        setSession(await api("login", { username: f.username.value, password: f.password.value }));
+        tab = null;
+        render();
+      });
+    }
+  },
+    h("h1", {}, "Online Exam"),
+    h("p", { class: "muted" }, "Sign in to continue."),
+    field("Username", h("input", { type: "text", name: "username", required: true, autocomplete: "username" })),
+    field("Password", h("input", { type: "password", name: "password", required: true, autocomplete: "current-password" })),
+    h("button", {}, "Sign in")
+  );
+  return f;
+}
+
+// ---------- views: admin ----------
+function viewUsers() {
+  const roleSel = () => h("select", { name: "role" },
+    h("option", { value: "student" }, "Student"),
+    h("option", { value: "teacher" }, "Teacher"));
+
+  const f = h("form", {
+    class: "grid",
+    onsubmit: (e) => {
+      e.preventDefault();
+      run(async () => {
+        const r = await api("createUsers", {
+          users: [{ name: f.fullname.value, username: f.username.value, password: f.password.value, role: f.role.value }]
+        });
+        if (r.errors.length) return notify(r.errors[0], true);
+        teachersCache = null;
+        flash = "Account created.";
+        render();
+      });
+    }
+  },
+    field("Full name", h("input", { type: "text", name: "fullname", required: true })),
+    field("Username", h("input", { type: "text", name: "username", required: true, autocomplete: "off" })),
+    field("Password", h("input", { type: "text", name: "password", required: true, autocomplete: "off", placeholder: "min 6 chars" })),
+    field("Role", roleSel()),
+    h("button", {}, "Create account")
+  );
+
+  const bulkRole = roleSel();
+  const bulkText = h("textarea", { placeholder: "Full name, username, password\nJane Doe, jane.doe, secret123" });
+  const bulk = h("div", {},
+    h("h3", {}, "Add many accounts at once"),
+    h("p", { class: "muted small" }, "One per line: full name, username, password."),
+    bulkText,
+    h("div", { class: "row" }, bulkRole,
+      h("button", {
+        onclick: () => run(async () => {
+          const users = bulkText.value.split("\n").map((l) => l.trim()).filter(Boolean).map((line) => {
+            const p = line.split(",").map((x) => x.trim());
+            return { name: p[0], username: p[1], password: p.slice(2).join(","), role: bulkRole.value };
+          });
+          if (!users.length) return notify("Enter at least one line.", true);
+          const r = await api("createUsers", { users });
+          teachersCache = null;
+          flash = r.created + " account(s) created." + (r.errors.length ? " Problems: " + r.errors.join("; ") : "");
+          render();
+        })
+      }, "Create accounts"))
+  );
+
+  const list = lazy(() => api("listUsers"), ({ users }) => {
+    users.sort((a, b) => a.role.localeCompare(b.role) || a.name.localeCompare(b.name));
+    const rows = users.map((u) => [
+      u.name,
+      u.username,
+      h("span", { class: "badge " + u.role }, u.role),
+      h("span", {},
+        h("button", {
+          class: "secondary",
+          onclick: () => run(async () => {
+            const pw = prompt("New password for " + u.username + " (min 6 characters):");
+            if (pw === null) return;
+            if (pw.length < 6) return notify("Password must be at least 6 characters.", true);
+            await api("resetPassword", { userId: u.id, password: pw });
+            notify("Password changed.");
+          })
+        }, "Reset password"),
+        u.id === me.id ? null : h("button", {
+          class: "danger",
+          onclick: () => run(async () => {
+            if (!confirm("Delete " + u.name + " (" + u.username + ")?")) return;
+            await api("deleteUser", { userId: u.id });
+            teachersCache = null;
+            render();
+          })
+        }, "Delete"))
+    ]);
+    return h("div", { class: "table-wrap" }, table(["Name", "Username", "Role", "Actions"], rows));
+  });
+
+  return h("div", {}, h("h3", {}, "Create an account"), f, list, bulk);
+}
+
+function viewExams() {
+  const isAdmin = me.role === "admin";
+  return lazy(() => api("listExams"), ({ exams, teachers }) => {
+    if (!exams.length)
+      return h("p", { class: "muted" }, isAdmin ? "No exams yet. Use the Import exam tab." : "No exams are assigned to you yet.");
+    const rows = exams.map((e) => {
+      const teacherCell = isAdmin
+        ? (() => {
+            const s = h("select", {
+              onchange: () => run(async () => {
+                await api("updateExam", { examId: e.id, teacherId: s.value });
+                notify("Teacher updated.");
+              })
+            }, h("option", { value: "" }, "-- none --"),
+              teachers.map((t) => h("option", { value: t.id }, t.name)));
+            s.value = e.teacherId || "";
+            return s;
+          })()
+        : (teachers.find((u) => u.id === e.teacherId) || {}).name || me.name;
+      return [
+        e.title,
+        e.questionCount,
+        e.durationMinutes + " min",
+        e.attemptsAllowed || 1,
+        teacherCell,
+        h("span", { class: "badge" }, e.active === false ? "disabled" : "open"),
+        isAdmin ? h("span", {},
+          h("button", {
+            class: "secondary",
+            onclick: () => run(async () => { await api("updateExam", { examId: e.id, active: e.active === false }); render(); })
+          }, e.active === false ? "Enable" : "Disable"),
+          h("button", {
+            class: "danger",
+            onclick: () => run(async () => {
+              if (!confirm('Delete exam "' + e.title + '"?')) return;
+              await api("deleteExam", { examId: e.id });
+              render();
+            })
+          }, "Delete")) : ""
+      ];
+    });
+    return h("div", { class: "table-wrap" },
+      table(["Title", "Questions", "Duration", "Attempts", "Teacher", "Status", isAdmin ? "Actions" : ""], rows));
+  });
+}
+
+function viewImport() {
+  const loader = () => teachersCache
+    ? Promise.resolve(teachersCache)
+    : api("listTeachers").then((r) => (teachersCache = r.teachers));
+  return lazy(loader, (teachers) => {
+    const pasteBox = h("textarea", { placeholder: "Paste exam text here (same format as below)" });
+    const wrap = h("div", {},
+      h("p", { class: "muted" }, "Upload a text-based PDF or paste the exam text. You can review and fix everything before saving."),
+      h("div", { class: "row" },
+        h("input", { type: "file", accept: ".pdf,application/pdf", onchange: onPdfChosen })),
+      h("details", {},
+        h("summary", {}, "Or paste text instead"),
+        pasteBox,
+        h("button", {
+          class: "secondary",
+          onclick: () => {
+            if (pasteBox.value.trim().length < 10) return notify("Paste some exam text first.", true);
+            startDraft(pasteBox.value, "");
+          }
+        }, "Parse text")),
+      h("details", {}, h("summary", {}, "Expected format"), h("pre", {}, FORMAT_HELP)));
+    if (draft) wrap.append(viewDraft(teachers));
+    return wrap;
+  });
+}
+
+function viewDraft(teachers) {
+  const d = draft;
+  const teacherSel = h("select", { onchange: () => (d.teacherId = teacherSel.value) },
+    h("option", { value: "" }, "-- none --"),
+    teachers.map((t) => h("option", { value: t.id }, t.name)));
+  teacherSel.value = d.teacherId || "";
+
+  const meta = h("div", { class: "grid" },
+    field("Exam title", h("input", { type: "text", value: d.title, oninput: (e) => (d.title = e.target.value) })),
+    field("Duration (minutes)", h("input", { type: "number", min: 1, value: d.durationMinutes, oninput: (e) => (d.durationMinutes = e.target.value) })),
+    field("Attempts allowed", h("input", { type: "number", min: 1, value: d.attemptsAllowed, oninput: (e) => (d.attemptsAllowed = e.target.value) })),
+    field("Teacher", teacherSel));
+
+  const cards = d.questions.map((q, qi) =>
+    h("div", { class: "q-card" },
+      h("strong", {}, "Question " + (qi + 1)),
+      h("textarea", { oninput: (e) => (q.q = e.target.value) }, q.q),
+      q.options.map((o, oi) =>
+        h("div", { class: "opt-row" },
+          h("input", { type: "radio", name: "correct" + qi, checked: q.answer === oi, onchange: () => (q.answer = oi), title: "Correct answer" }),
+          h("input", { type: "text", value: o, oninput: (e) => (q.options[oi] = e.target.value) }))),
+      h("button", { class: "secondary", onclick: () => { q.options.push(""); render(); } }, "+ Option"),
+      h("button", { class: "danger", onclick: () => { d.questions.splice(qi, 1); render(); } }, "Remove question"),
+      q.answer === null ? h("span", { class: "badge" }, "pick the correct answer") : null));
+
+  return h("div", {},
+    h("hr"),
+    h("h3", {}, "Review imported exam (" + d.questions.length + " questions)"),
+    d.warnings.length
+      ? h("div", { class: "notice warn" }, h("strong", {}, "Check these: "), h("ul", {}, d.warnings.map((w) => h("li", {}, w))))
+      : null,
+    meta,
+    h("p", { class: "muted small" }, "Select the radio button next to each correct answer. Empty options are dropped on save."),
+    cards,
+    h("button", { class: "secondary", onclick: () => { d.questions.push({ q: "", options: ["", "", "", ""], answer: null }); render(); } }, "+ Add question"),
+    h("button", { onclick: saveDraft }, "Save exam"),
+    h("button", { class: "secondary", onclick: () => { draft = null; render(); } }, "Discard"));
+}
+
+// ---------- views: results (admin & teacher) ----------
+function viewResults() {
+  return lazy(() => api("results"), ({ results, exams }) => {
+    let current = [];
+    const sel = h("select", { onchange: () => draw() },
+      h("option", { value: "" }, "All exams"),
+      exams.map((e) => h("option", { value: e.id }, e.title)));
+    const tableBox = h("div", { class: "table-wrap" });
+
+    const draw = () => {
+      current = results
+        .filter((r) => !sel.value || r.examId === sel.value)
+        .sort((a, b) => new Date(b.submittedAt) - new Date(a.submittedAt));
+      tableBox.replaceChildren(
+        current.length
+          ? table(["Date", "Student", "Username", "Exam", "Score", "%", "Tab switches"],
+              current.map((r) => [
+                new Date(r.submittedAt).toLocaleString(), r.studentName, r.username, r.examTitle,
+                r.score + "/" + r.total, r.percent + "%", r.tabSwitches
+              ]))
+          : h("p", { class: "muted" }, "No results yet."));
+    };
+
+    const bar = h("div", { class: "row" }, sel,
+      h("button", {
+        onclick: () => {
+          const head = ["Submitted", "Student", "Username", "Exam", "Score", "Total", "Percent", "Tab switches", "Auto-submitted"];
+          const lines = [head].concat(current.map((r) =>
+            [r.submittedAt, r.studentName, r.username, r.examTitle, r.score, r.total, r.percent, r.tabSwitches, r.autoSubmitted]));
+          download("results.csv", lines.map((l) => l.map(csvCell).join(",")).join("\n"), "text/csv");
+        }
+      }, "Download CSV"),
+      h("button", { class: "secondary", onclick: () => render() }, "Refresh"));
+
+    const out = h("div", {}, bar, tableBox);
+    draw();
+    return out;
+  });
+}
+
+// ---------- views: student ----------
+function viewAvailable() {
+  return lazy(() => api("studentExams"), ({ exams }) => {
+    if (!exams.length) return h("p", { class: "muted" }, "No exams are available yet.");
+    return h("div", {}, exams.map((e) => {
+      const allowed = e.attemptsAllowed || 1;
+      return h("div", { class: "card" },
+        h("h3", {}, e.title),
+        h("p", { class: "muted" }, e.questionCount + " questions · " + e.durationMinutes + " min · attempts used " + e.used + "/" + allowed),
+        h("button", { disabled: e.used >= allowed, onclick: () => startAttempt(e) }, e.used >= allowed ? "No attempts left" : "Start exam"));
+    }));
+  });
+}
+
+function viewMyResults() {
+  return lazy(() => api("myResults"), ({ results }) => {
+    const mine = results.sort((a, b) => new Date(b.submittedAt) - new Date(a.submittedAt));
+    if (!mine.length) return h("p", { class: "muted" }, "You have not taken any exams yet.");
+    return h("div", { class: "table-wrap" },
+      table(["Date", "Exam", "Score", "%"],
+        mine.map((a) => [new Date(a.submittedAt).toLocaleString(), a.examTitle, a.score + "/" + a.total, a.percent + "%"])));
+  });
+}
+
+function startAttempt(exam) {
+  if (!confirm('Start "' + exam.title + '"? The timer begins now (' + exam.durationMinutes + " minutes).")) return;
+  run(async () => { await api("start", { examId: exam.id }); render(); });
+}
+
+function viewExam(r) {
+  const exam = r.exam;
+  const active = r.active;
+  active.answers = active.answers || {};
+  const offset = r.now - Date.now();      // server clock minus this device's clock
+  examState = active;
+
+  let saveT = null;
+  examSave = () => {
+    clearTimeout(saveT);
+    saveT = setTimeout(() => {
+      api("saveProgress", { answers: active.answers, tabSwitches: active.tabSwitches || 0 }).catch(() => {});
+    }, 600);
+  };
+
+  let busy = false;
+  async function submit(auto) {
+    if (busy) return;
+    busy = true;
+    clearInterval(timerInterval);
+    try {
+      const res = await api("submit", { answers: active.answers, tabSwitches: active.tabSwitches || 0, auto: !!auto });
+      const a = res.attempt;
+      flash = "Submitted" + (auto ? " (time expired)" : "") + ". You scored " + a.score + " out of " + a.total + " (" + a.percent + "%).";
+      tab = "mine";
+      examState = null;
+      render();
+    } catch (e) {
+      busy = false;
+      notify(e.message, true);
+      if (/No exam in progress/.test(e.message)) { examState = null; return render(); }
+      timerInterval = setInterval(tick, 1000);
+    }
+  }
+
+  const timer = h("span", {}, "Time left: --:--");
+  function tick() {
+    const rem = Math.max(0, Math.round((active.endsAt - (Date.now() + offset)) / 1000));
+    timer.textContent = "Time left: " + String(Math.floor(rem / 60)).padStart(2, "0") + ":" + String(rem % 60).padStart(2, "0");
+    timer.className = rem <= 30 ? "low" : "";
+    if (rem <= 0) submit(true);
+  }
+
+  const blocks = exam.questions.map((q, qi) =>
+    h("div", { class: "question-block" },
+      h("p", {}, h("strong", {}, (qi + 1) + ". " + q.q)),
+      q.options.map((o, oi) =>
+        h("label", { class: "opt" },
+          h("input", {
+            type: "radio",
+            name: "q" + qi,
+            checked: active.answers[qi] === oi,
+            onchange: () => { active.answers[qi] = oi; examSave(); }
+          }),
+          h("span", {}, o)))));
+
+  const view = h("div", { class: "card" },
+    h("div", { class: "exam-top" }, h("span", {}, exam.title + " — " + me.name), timer),
+    blocks,
+    h("button", { onclick: () => { if (confirm("Submit your exam now?")) submit(false); } }, "Submit exam"),
+    h("p", { class: "muted small" }, "Answers and the timer are saved on the server. Refreshing or switching device will not reset your progress."));
+
+  setTimeout(tick, 0);
+  timerInterval = setInterval(tick, 1000);
+  return view;
+}
+
+// ---------- shell & router ----------
+function tabsFor(role) {
+  if (role === "admin")
+    return [
+      { id: "users", label: "Users" }, { id: "exams", label: "Exams" },
+      { id: "import", label: "Import exam" }, { id: "results", label: "Results" }
+    ];
+  if (role === "teacher") return [{ id: "exams", label: "My exams" }, { id: "results", label: "Results" }];
+  return [{ id: "available", label: "Exams" }, { id: "mine", label: "My results" }];
+}
+
+function shell() {
+  const tabs = tabsFor(me.role);
+  if (!tab || !tabs.some((t) => t.id === tab)) tab = tabs[0].id;
+  const views = {
+    users: viewUsers, exams: viewExams, import: viewImport, results: viewResults,
+    available: viewAvailable, mine: viewMyResults
+  };
+  const msg = flash;
+  flash = null;
+  return h("div", {},
+    h("div", { class: "topbar" },
+      h("strong", {}, "Online Exam"),
+      h("span", { class: "muted" }, me.name + " ", h("span", { class: "badge " + me.role }, me.role)),
+      h("button", { class: "secondary", onclick: logout }, "Log out")),
+    h("div", { class: "tabs" }, tabs.map((t) =>
+      h("button", { class: "tab" + (t.id === tab ? " active" : ""), onclick: () => { tab = t.id; render(); } }, t.label))),
+    h("div", { class: "panel" },
+      msg ? h("div", { class: "notice" }, msg) : null,
+      views[tab]()));
+}
+
+async function render() {
+  clearInterval(timerInterval);
+  examState = null;
+  const app = $("app");
+  if (!APP_CONFIG.endpoint) return app.replaceChildren(viewNotConfigured());
+
+  if (!me) {
+    app.replaceChildren(h("p", { class: "muted" }, "Loading..."));
+    try {
+      const s = await api("status");
+      app.replaceChildren(s.hasUsers ? viewLogin() : viewSetup());
+    } catch (e) {
+      app.replaceChildren(viewError(e, render));
+    }
+    return;
+  }
+
+  if (me.role === "student") {
+    app.replaceChildren(h("p", { class: "muted" }, "Loading..."));
+    try {
+      const r = await api("getActive");
+      if (r.active) return app.replaceChildren(viewExam(r));
+    } catch (e) {
+      if (!me) return;               // session expired: render() already switched to login
+      return app.replaceChildren(viewError(e, render));
+    }
+  }
+  app.replaceChildren(shell());
+}
+
+// count tab switches during an exam (saved with the attempt)
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden || !examState) return;
+  examState.tabSwitches = (examState.tabSwitches || 0) + 1;
+  if (examSave) examSave();
+});
+
+render();
+  </script>
+</body>
+</html>
